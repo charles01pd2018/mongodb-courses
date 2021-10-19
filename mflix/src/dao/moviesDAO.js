@@ -55,13 +55,26 @@ export default class MoviesDAO {
     */
 
     let cursor
+    const pipeline = [
+      {
+        $match: {
+          'countries': { $in: countries }
+        },
+      },
+      {
+        $project: {
+          'title': 1,
+        }
+      },
+    ];
+
     try {
       // TODO Ticket: Projection
       // Find movies matching the "countries" list, but only return the title
       // and _id. Do not put a limit in your own implementation, the limit
       // here is only included to avoid sending 46000 documents down the
       // wire.
-      cursor = await movies.find().limit(1)
+      cursor = await movies.aggregate(pipeline);
     } catch (e) {
       console.error(`Unable to issue find command, ${e}`)
       return []
@@ -116,7 +129,7 @@ export default class MoviesDAO {
 
     // TODO Ticket: Text and Subfield Search
     // Construct a query that will search for the chosen genre.
-    const query = {}
+    const query = { 'genres': { $in: searchGenre } };
     const project = {}
     const sort = DEFAULT_SORT
 
@@ -196,6 +209,9 @@ export default class MoviesDAO {
       sortStage,
       // TODO Ticket: Faceted Search
       // Add the stages to queryPipeline in the correct order.
+      skipStage,
+      limitStage,
+      facetStage,
     ]
 
     try {
@@ -259,7 +275,7 @@ export default class MoviesDAO {
 
     // TODO Ticket: Paging
     // Use the cursor to only return the movies that belong on the current page
-    const displayCursor = cursor.limit(moviesPerPage)
+    const displayCursor = cursor.limit(moviesPerPage).skip(page * 20)
 
     try {
       const moviesList = await displayCursor.toArray()
@@ -296,7 +312,22 @@ export default class MoviesDAO {
       const pipeline = [
         {
           $match: {
-            _id: ObjectId(id)
+            _id: ObjectId(id),
+          },
+        },
+        {
+          $lookup: {
+            from: 'comments',
+            let: { id: '$_id' },
+            pipeline: [
+              {
+                $match: { $expr: { $eq: ['$movie_id', '$$id' ] } }
+              },
+              {
+                $sort: { 'date': -1 }
+              },
+            ],
+            as: 'comments',
           }
         }
       ]
@@ -312,6 +343,11 @@ export default class MoviesDAO {
       // TODO Ticket: Error Handling
       // Catch the InvalidId error by string matching, and then handle it.
       console.error(`Something went wrong in getMovieByID: ${e}`)
+      
+      const ID_ERROR = 'Error: Argument passed in must be a single String of 12 bytes or a string of 24 hex characters';
+      if ( e.toString().startsWith( ID_ERROR ) ) {
+        return null;
+      }
       throw e
     }
   }
